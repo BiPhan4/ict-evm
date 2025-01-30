@@ -1,12 +1,12 @@
 jackal_config:
-  rpc: http://host.docker.internal:45619
-  grpc: custom-grpc.polkachu.com:17590
+  rpc: http://127.0.0.1:53532
+  grpc: 127.0.0.1:53533
   seed_file: seed.json
-  contract: jkl1customcontractaddress
+  contract: jkl14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9scsc9nr
 networks_config:
 - name: Ethereum Sepolia
   rpc: http://127.0.0.1:8545
   ws: ws://127.0.0.1:8545
-  contract: 0xCustomContractAddress
-  chain_id: 11155111
+  contract: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+  chain_id: 31337
   finality: 2

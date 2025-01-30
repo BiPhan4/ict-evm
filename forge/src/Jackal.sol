@@ -53,15 +53,10 @@ abstract contract Jackal {
     function postFileFrom(address from, string memory merkle, uint64 filesize) public payable{
         require(msg.sender != address(0), "Invalid sender address");
         require(getAllowance(msg.sender, from), "No allowance for this contract set");
-
-        emit Debug("into postFileFrom"); 
-
         emit PostedFile(from, merkle, filesize);
     }
 
     function postFile(string memory merkle, uint64 filesize) public payable{
-        emit Debug("into postFile"); 
-
         postFileFrom(msg.sender, merkle, filesize);
     }
 }

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -16,18 +18,23 @@ import (
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/chainconfig"
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/e2esuite"
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/eth"
+	factorytypes "github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/types/bindingsfactory"
+	logger "github.com/strangelove-ventures/interchaintest/v7/examples/logger"
 	"github.com/strangelove-ventures/interchaintest/v7/testreporter"
+
 	"go.uber.org/zap/zaptest"
 )
 
 var (
-	canineRPCAddress     string
-	jackalEVMContainerID string
+	canineRPCAddress string
+	localConfigPath  string
+	factoryAddress   string
+	logFile          *os.File
 )
 
 func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 	// Start Anvil node
-	anvilArgs := []string{"--port", "8545", "--block-time", "1", "--host", "0.0.0.0"}
+	anvilArgs := []string{"--port", "8545", "--block-time", "1", "--host", "0.0.0.0", "-vvvvv"}
 	// easiest way to install anvil is foundryup --install stable
 	// you can modify the code to use docker container with --network host
 	output, err := eth.ExecuteCommand("anvil", anvilArgs)
@@ -78,12 +85,13 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 	canineRPC := canine.GetRPCAddress()
 	canineRPCAddress = canineRPC
 	log.Printf("canine-chain rpc is: %s", canineRPCAddress)
-	canineHostRPC := canine.GetHostRPCAddress()
-	log.Printf("canine-chain host rpc is: %s", canineHostRPC)
+	caninedHostRPC := canine.GetHostRPCAddress()
+	log.Printf("canine-chain host rpc is: %s", caninedHostRPC)
+	caninedHostGRPC := canine.GetHostGRPCAddress()
 
 	// NOTE: I think Mulberry should be able to listen to canine-chain using '127.0.0.1' now
 	// TODO: change it back to local host then
-	updatedCanineHostRPC := strings.Replace(canineHostRPC, "127.0.0.1", "host.docker.internal", 1)
+	updatedCanineHostRPC := strings.Replace(caninedHostRPC, "127.0.0.1", "host.docker.internal", 1)
 	log.Printf("updatedCanineHostRPC is: %s", updatedCanineHostRPC)
 
 	// returned canine-chain rpc is: http://puppy-1-fn-0-TestWithOutpostTestSuite_TestJackalEVMBridge:26657
@@ -101,13 +109,7 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 	// I thought ic build process assinged the chain automatically?
 	s.ChainB = canine
 
-	// this is the seed phrase for the danny user that appears in all of canine-chain's testing scripts
-	userBSeed := "brief enhance flee chest rabbit matter chaos clever lady enable luggage arrange hint " +
-		"quarter change float embark canoe chalk husband legal dignity music web"
-	userB, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "jkl", userBSeed, userFunds, s.ChainB)
-	s.Require().NoError(err)
-
-	s.UserB = userB // the jackal user
+	// Danny's seed phrase was here before
 
 	// Do we need a second Jackal User?
 
@@ -115,7 +117,7 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 	var image string
 	switch runtime.GOARCH {
 	case "arm64":
-		image = "biphan4/mulberry:0.0.9"
+		image = "biphan4/mulberry:0.0.10"
 	case "amd64":
 		image = "anthonyjackallabs/mulberry"
 	default:
@@ -127,25 +129,25 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 	}
 
 	// Get the absolute path of the local config file
-	localConfigPath, err := filepath.Abs("e2esuite/mulberry_config.yaml")
+	createdLocalConfigPath, err := filepath.Abs("e2esuite/mulberry_config.yaml")
 	if err != nil {
 		log.Fatalf("failed to resolve config path: %v", err)
 	}
+	localConfigPath = createdLocalConfigPath
 
 	// Run the container, stream logs
-	jackalEVMContainerID, err = e2esuite.RunContainerWithConfig(image, "mulberry", localConfigPath)
+	containerID, err := e2esuite.RunContainerWithConfig(image, "mulberry", localConfigPath)
 	if err != nil {
 		log.Fatalf("Error running container: %v", err)
 	}
 
-	logFile, err := os.Create("mulberry_logs.txt")
+	logFile, err = os.Create("mulberry_logs.txt")
 	if err != nil {
 		log.Fatalf("Failed to create log file: %v", err)
 	}
-	defer logFile.Close()
 
 	go func() {
-		err := e2esuite.StreamContainerLogsToFile(jackalEVMContainerID, logFile)
+		err := e2esuite.StreamContainerLogsToFile(containerID, logFile)
 		if err != nil {
 			log.Printf("Failed to stream Mulberry logs to file: %v", err)
 		}
@@ -153,7 +155,7 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 
 	// Give mulberry a wallet
 	addressCommand := []string{"sh", "-c", "mulberry wallet address >> /proc/1/fd/1 2>> /proc/1/fd/2"}
-	if err := e2esuite.ExecCommandInContainer(jackalEVMContainerID, addressCommand); err != nil {
+	if err := e2esuite.ExecCommandInContainer(containerID, addressCommand); err != nil {
 		log.Fatalf("Error creating wallet address in container: %v", err)
 	}
 
@@ -164,28 +166,26 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 		log.Fatalf("Failed to update mulberry config: %v", err)
 	}
 
-	log.Printf("Updated mulberry config with WS address: %s\n", wsAddress)
-
-	// TODO: we can put the bindings contract address here?
-	// Update the YAML file to connect with canine-chain
-	if err := e2esuite.UpdateMulberryJackalConfigRPC(localConfigPath, updatedCanineHostRPC); err != nil {
-		log.Fatalf("Failed to update mulberry's jackal config: %v", err)
+	if err := e2esuite.UpdateMulberryJackalRPC(localConfigPath, caninedHostRPC, caninedHostGRPC); err != nil {
+		log.Fatalf("Failed to update canine-chain rpc address: %v", err)
 	}
+
+	log.Printf("Updated mulberry config with WS address: %s\n", wsAddress)
 
 	// Start Mulberry
 	// NOTE: get logs some other way, streaming the output of 'start' is blocking the rest of the code
-	startCommand := []string{"sh", "-c", "mulberry start >> /proc/1/fd/1 2>> /proc/1/fd/2"}
-	if err := e2esuite.ExecCommandInContainer(jackalEVMContainerID, startCommand); err != nil {
+	startCommand := []string{"sh", "-c", "export NO_COLOR=true; mulberry start >> /proc/1/fd/1 2>> /proc/1/fd/2"}
+	if err := e2esuite.ExecCommandInContainer(containerID, startCommand); err != nil {
 		log.Fatalf("Error starting mulberry in container: %v", err)
 	}
 
 	// TODO: remove this sleep eventually if it's not needed
-	time.Sleep(30 * time.Second)
+	time.Sleep(5 * time.Second)
 	// retrieve mulberry's jkl seed
 
 	filePath := "/root/.mulberry/seed.json"
 
-	contents, err := e2esuite.RetrieveFileFromContainer(jackalEVMContainerID, filePath)
+	contents, err := e2esuite.RetrieveFileFromContainer(containerID, filePath)
 	if err != nil {
 		log.Fatalf("Failed to retrieve file: %v", err)
 	}
@@ -211,9 +211,81 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 
 	fmt.Println("Reconstructed String:")
 	fmt.Println(reconstructedString)
+	fmt.Printf("String Length: %d\n", len(reconstructedString))
+	fmt.Printf("Raw Bytes: %q\n", []byte(cleanedContents))
 
-	// Seems that pesky <?> keeps appearing in our terminal
-	// TODO: log raw bytes, log the String length, dump hex values
+	// Remove the pesky symbol at index 0 if it exists
+	if len(reconstructedString) > 0 && []rune(reconstructedString)[0] == '\uFFFD' {
+		// Remove the pesky symbol at index 0
+		reconstructedString = string([]rune(reconstructedString)[1:])
+	}
+
+	// Confirm the pesky symbol is gone
+	verifyString(reconstructedString)
+
+	// Proceed with the cleaned string
+	mulberrySeed := reconstructedString
+
+	userB, err := interchaintest.GetAndFundTestUserWithMnemonic(ctx, "jkl", mulberrySeed, userFunds, s.ChainB)
+	s.Require().NoError(err)
+
+	s.UserB = userB // the jackal user
+	fmt.Printf("Mulberry's jkl account: %s\n", userB.FormattedAddress())
+
+	// This is the user in our cosmwasm_signer, so we ensure they have funds
+	s.FundAddressChainB(ctx, s.UserB.FormattedAddress())
+
+	// Store code of bindings factory
+	FactoryCodeId, err := s.ChainB.StoreContract(ctx, s.UserB.KeyName(), "../wasm_artifacts/bindings_factory.wasm")
+	s.Require().NoError(err)
+	fmt.Println(FactoryCodeId)
+
+	// Store code of filetree bindings
+	BindingsCodeId, error := s.ChainB.StoreContract(ctx, s.UserB.KeyName(), "../wasm_artifacts/canine_bindings.wasm")
+	s.Require().NoError(error)
+	fmt.Println(BindingsCodeId)
+
+	// codeId is string and needs to be converted to uint64
+	BindingsCodeIdAsInt, err := strconv.ParseInt(BindingsCodeId, 10, 64)
+	s.Require().NoError(err)
+
+	// NOTE: We should have imported factorytypes from jackal-evm but that repo is too big and messy
+	// which causes the 'module source tree too large' error when running: go get github.com/JackalLabs/jackal-evm@e75940283544bade2b37bf1e0523563289184aca
+
+	// TODO: import factorytypes from 'jackal-evm' when jackal-evm is cleaned up
+	// Instantiate the factory, giving it the codeId of the filetree bindings contract
+	instantiateMsg := factorytypes.InstantiateMsg{BindingsCodeId: int(BindingsCodeIdAsInt)}
+
+	contractAddr, _ := s.ChainB.InstantiateContract(ctx, s.UserB.KeyName(), FactoryCodeId, toString(instantiateMsg), false, "--gas", "500000", "--admin", s.UserB.KeyName())
+	// s.Require().NoError(err)
+	fmt.Printf("factory contract address: %s\n", contractAddr)
+	// TODO: give Mulberry factory contract address
+
+	// NOTE: Looks like Mulberry is calling the factory
+	// TODO: double check that mulberry is in fact calling the factory, and not the bindings directly
+
+	// NOTE: The contractAddr can't be retrived at this time because of sdk tx parsing errors we noted in 'jackal-evm' repo
+	// We can fix that later but for now, we'll just hard code the consistent factory contract address
+	factoryContractAddress := "jkl14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9scsc9nr"
+	factoryAddress = factoryContractAddress
+
+	fmt.Println(factoryContractAddress)
+	// TODO: we can put the bindings contract address here?
+
+	contractState, stateErr := e2esuite.GetState(ctx, s.ChainB, factoryContractAddress)
+	s.Require().NoError(stateErr)
+	logger.LogInfo(contractState)
+
+	// Update the YAML file to connect with canine-chain
+	// WARNING: if Mulberry can't broadcast the CosmWasm tx, this is the first point of inspection
+	if err := e2esuite.UpdateMulberryJackalConfig(localConfigPath, caninedHostRPC, factoryContractAddress); err != nil { // Mulberry should be able to see local host
+		log.Fatalf("Failed to update mulberry's jackal config: %v", err)
+	}
+
+	// Fund the factory so it can fund the bindings
+	s.FundAddressChainB(ctx, factoryContractAddress)
+
+	fmt.Printf("evm user A: %s", EvmUserA)
 }
 
 // Helper function to remove non-printable characters
@@ -225,4 +297,30 @@ func removeNonPrintable(input string) string {
 		}
 	}
 	return string(result)
+}
+
+func verifyString(content string) {
+	fmt.Printf("String Length: %d\n", len(content))
+
+	for i, r := range content {
+		if r == '�' { // Check for the replacement character
+			fmt.Printf("Found pesky symbol at index %d\n", i)
+			return
+		}
+	}
+
+	fmt.Println("No pesky symbol found in the string.")
+}
+
+// log address of bindings contract
+// create bindings factory contract
+
+// toString converts the message to a string using json
+func toString(msg any) string {
+	bz, err := json.Marshal(msg)
+	if err != nil {
+		panic(err)
+	}
+
+	return string(bz)
 }

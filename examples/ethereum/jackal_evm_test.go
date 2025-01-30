@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/big"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"time"
 
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/e2esuite"
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/eth"
+	factorytypes "github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/types/bindingsfactory"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -19,21 +20,14 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-func (s *OutpostTestSuite) TestJackalEVMBridge() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		<-c
-		cleanJackalEVMBridgeSuite()
-	}()
+var EvmUserA string
 
+func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	ctx := context.Background()
 	s.SetupJackalEVMBridgeSuite(ctx)
+	defer logFile.Close()
 
 	// Fund jackal account
-
-	// This is the user in our cosmwasm_signer, so we ensure they have funds
-	s.FundAddressChainB(ctx, "jkl12g4qwenvpzqeakavx5adqkw203s629tf6k8vdg")
 
 	// Connect to Anvil RPC
 	rpcURL := "http://127.0.0.1:8545"
@@ -72,6 +66,37 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	// Get the public address of Account A
 	addressA := crypto.PubkeyToAddress(privKeyA.PublicKey)
 	fmt.Println(addressA)
+	addressAString := addressA.String()
+	EvmUserA = addressAString
+	addressAHex := addressA.Hex()
+
+	fmt.Printf("addressAString: %s", addressAString)
+	fmt.Printf("addressAHex: %s", addressAHex)
+
+	msg := factorytypes.ExecuteMsg{
+		CreateBindings: &factorytypes.ExecuteMsg_CreateBindings{UserEvmAddress: &EvmUserA},
+	}
+	// WARNING: possible that we made a bindings contract for the wrong address. Or the address was empty when we sent the below tx
+	// and it failed silently.
+	res, _ := s.ChainB.ExecuteContract(ctx, s.UserB.KeyName(), factoryAddress, msg.ToString(), "--gas", "500000")
+	// NOTE: cannot parse res because of cosmos-sdk issue noted before, so we will get an error
+	// fortunately, we went into the docker container to confirm that the post key msg does get saved into canine-chain
+	fmt.Println(res)
+
+	// Let's have the factory give evmUserA 200jkl
+	fundingAmount := int64(200_000_000)
+
+	factoryFundingExecuteMsg := factorytypes.ExecuteMsg{
+		FundBindings: &factorytypes.ExecuteMsg_FundBindings{
+			EvmAddress: &EvmUserA,
+			Amount:     &fundingAmount,
+		},
+	}
+
+	fundingRes, _ := s.ChainB.ExecuteContract(ctx, s.UserB.KeyName(), factoryAddress, factoryFundingExecuteMsg.ToString(), "--gas", "500000")
+	fmt.Println(fundingRes)
+
+	time.Sleep(30 * time.Second)
 
 	// Check Account A's nonce
 	nonce, err := client.PendingNonceAt(context.Background(), addressA)
@@ -136,13 +161,19 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 
 	// Deploy the JackalBridge contract
 	// The deployer is the owner of the contract, and who is allowed to relay the event--I think?
-	returnedContractAddr, err := ethWrapper.ForgeCreate(privKeyA, "JackalBridge", pathOfOutpost, relays, priceFeed)
+	returnedContractAddr, err := ethWrapper.ForgeCreate(privKeyA, "JackalBridge", pathOfOutpost, relays, priceFeed) // fails with "abi: attempting to unmarshal an empty string while arguments are expected", shows up a few seconds later
 	if err != nil {
 		log.Fatalf("Failed to deploy simple storage: %v", err)
 	}
 
 	ContractAddress = returnedContractAddr
 	fmt.Printf("JackalBridge deployed at: %s\n", ContractAddress)
+
+	// NOTE: The name of the network shouldn't matter when trying to establish a connection
+	// WARNING: double check finality. I think it's 2 but double check
+	if err := e2esuite.UpdateMulberryConfigEVM(localConfigPath, "Ethereum Sepolia", ContractAddress, int(chainID.Int64())); err != nil {
+		log.Fatalf("Failed to update mulberry config: %v", err)
+	}
 
 	// Note: I wonder if this is Mulberry's issue: trying to use an RPC client
 	// To establish the WS connection?
@@ -157,18 +188,34 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	go eth.ListenToLogs(wsClient, common.HexToAddress(ContractAddress))
 
 	// Define the parameters for the `postFile` function
-	merkle := "placeholder-merkle-root"
-	filesize := "1048576" // 1 MB in bytes (as string)
+
+	merkleBytes := []byte{0x01, 0x02, 0x03, 0x04}
+
+	// Encode to hexadecimal
+	merkleHex := hex.EncodeToString(merkleBytes)
+
+	fmt.Println("Merkle Hex:", merkleHex)
+
+	filesize := "1048576" // 1 MB in bytes (as string) // WARNING: possible invalid file size
 
 	// Given value
 	value := big.NewInt(5000000000000)
 
 	// Call `postFile` on the deployed JackalBridge contract
 	functionSig := "postFile(string,uint64)"
-	args := []string{merkle, filesize}
+	args := []string{merkleHex, filesize}
 
 	txHash, err := ethWrapper.CastSend(ContractAddress, functionSig, args, rpcURL, privateKeyA, value)
 	fmt.Printf("tx hash is: %s\n", txHash)
+	if err != nil {
+		log.Fatalf("Failed to call `postFile` on the contract: %v", err)
+	}
+
+	time.Sleep(30 * time.Second)
+
+	// try again
+	txHash1, err := ethWrapper.CastSend(ContractAddress, functionSig, args, rpcURL, privateKeyA, value)
+	fmt.Printf("tx hash is: %s\n", txHash1)
 	if err != nil {
 		log.Fatalf("Failed to call `postFile` on the contract: %v", err)
 	}
@@ -177,12 +224,4 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 		fmt.Println("made it to the end")
 	}))
 	time.Sleep(10 * time.Hour) // if this is active vscode thinks test fails
-}
-
-func cleanJackalEVMBridgeSuite() {
-	eth.ExecuteCommand("killall", []string{"anvil"})
-	e2esuite.StopContainer(jackalEVMContainerID)
-	e2esuite.StopContainerByImage("biphan4/canine-evm:0.0.0")
-	time.Sleep(10 * time.Second)
-	os.Exit(1)
 }

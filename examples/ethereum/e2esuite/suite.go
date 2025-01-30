@@ -160,7 +160,7 @@ func (s *TestSuite) SetupSuite(ctx context.Context) {
 	// TODO: make a map of proposal IDs?
 
 	// Start Mulberry
-	startCommand := []string{"sh", "-c", "mulberry start >> /proc/1/fd/1 2>> /proc/1/fd/2"}
+	startCommand := []string{"sh", "-c", "export NO_COLOR=true; mulberry start >> /proc/1/fd/1 2>> /proc/1/fd/2"}
 	if err := ExecCommandInContainer(containerID, startCommand); err != nil {
 		log.Fatalf("Error starting mulberry in container: %v", err)
 	}

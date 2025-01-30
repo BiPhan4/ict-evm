@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"gopkg.in/yaml.v2"
 )
 
@@ -171,11 +172,73 @@ func StreamContainerLogsToFile(containerID string, logFile *os.File) error {
 	defer out.Close()
 
 	// Redirect logs to the provided file
-	_, err = io.Copy(logFile, out)
+	_, err = stdcopy.StdCopy(logFile, logFile, out)
 	return err
 }
 
-func UpdateMulberryConfigRPC(configPath, networkName, newRPC string, newWS string) error {
+func decodeConfigYAML(configPath string) (config MulberryConfig, err error) {
+	// Open the YAML file
+	file, err := os.Open(configPath)
+	if err != nil {
+		return config, fmt.Errorf("failed to open config file: %w", err)
+	}
+	defer file.Close()
+
+	// Decode YAML into a struct
+	decoder := yaml.NewDecoder(file)
+	if err := decoder.Decode(&config); err != nil {
+		return config, fmt.Errorf("failed to decode config file: %w", err)
+	}
+	return
+}
+
+func encodeConfigYAML(configPath string, config MulberryConfig) (err error) {
+	// Write the updated config back to the file
+	file, err := os.Create(configPath) // Truncate and overwrite the file
+	if err != nil {
+		return fmt.Errorf("failed to write to config file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := yaml.NewEncoder(file)
+	if err := encoder.Encode(&config); err != nil {
+		return fmt.Errorf("failed to encode updated config: %w", err)
+	}
+	return nil
+}
+
+func UpdateMulberryConfigRPC(configPath, networkName, newRPC string, newWS string) (err error) {
+	config, err := decodeConfigYAML(configPath)
+	for i, network := range config.NetworksConfig {
+		if network.Name == networkName {
+			config.NetworksConfig[i].RPC = newRPC
+			config.NetworksConfig[i].WS = newWS
+			break
+		}
+	}
+	if err != nil {
+		return
+	}
+	return encodeConfigYAML(configPath, config)
+}
+
+func UpdateMulberryConfigEVM(configPath, networkName, evmBridgeAddress string, chainID int) (err error) {
+	config, err := decodeConfigYAML(configPath)
+	for i, network := range config.NetworksConfig {
+		if network.Name == networkName {
+			config.NetworksConfig[i].Contract = evmBridgeAddress
+			config.NetworksConfig[i].ChainID = chainID
+			break
+		}
+	}
+	if err != nil {
+		return
+	}
+	return encodeConfigYAML(configPath, config)
+}
+
+// Update canine-chain rpc and bindings contract address
+func UpdateMulberryJackalConfig(configPath, newRPC string, bindingsFactory string) error {
 	// Open the YAML file
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -190,14 +253,8 @@ func UpdateMulberryConfigRPC(configPath, networkName, newRPC string, newWS strin
 		return fmt.Errorf("failed to decode config file: %w", err)
 	}
 
-	// Update the RPC address for the specified network
-	for i, network := range config.NetworksConfig {
-		if network.Name == networkName {
-			config.NetworksConfig[i].RPC = newRPC
-			config.NetworksConfig[i].WS = newWS
-			break
-		}
-	}
+	config.JackalConfig.RPC = newRPC
+	config.JackalConfig.Contract = bindingsFactory
 
 	// Write the updated config back to the file
 	file, err = os.Create(configPath) // Truncate and overwrite the file
@@ -214,7 +271,9 @@ func UpdateMulberryConfigRPC(configPath, networkName, newRPC string, newWS strin
 	return nil
 }
 
-func UpdateMulberryJackalConfigRPC(configPath, newRPC string) error {
+// Update canine-chain rpc and grpc
+// TODO: need to unify or separate--choose one
+func UpdateMulberryJackalRPC(configPath, newRPC string, newGRPC string) error {
 	// Open the YAML file
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -230,6 +289,7 @@ func UpdateMulberryJackalConfigRPC(configPath, newRPC string) error {
 	}
 
 	config.JackalConfig.RPC = newRPC
+	config.JackalConfig.GRPC = newGRPC
 
 	// Write the updated config back to the file
 	file, err = os.Create(configPath) // Truncate and overwrite the file
