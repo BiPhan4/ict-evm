@@ -5,7 +5,7 @@ go 1.19
 require (
 	cosmossdk.io/math v1.1.2
 	github.com/99designs/keyring v1.2.2
-	github.com/BurntSushi/toml v1.3.2
+	github.com/BurntSushi/toml v1.4.0
 	github.com/ChainSafe/go-schnorrkel/1 v0.0.0-00010101000000-000000000000
 	github.com/CosmWasm/wasmd v0.41.0
 	github.com/StirlingMarketingGroup/go-namecase v1.0.0
@@ -45,6 +45,13 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.25.0
 
+)
+
+require (
+	github.com/StackExchange/wmi v0.0.0-20180116203802-5d049714c4a6 // indirect
+	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
+	github.com/tklauser/numcpus v0.6.0 // indirect
 )
 
 require (
