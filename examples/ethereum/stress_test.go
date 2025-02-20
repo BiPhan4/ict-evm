@@ -16,19 +16,14 @@ import (
 	factorytypes "github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/types/bindingsfactory"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-var EvmUserA string
-
-func (s *OutpostTestSuite) TestJackalEVMBridge() {
+func (s *OutpostTestSuite) TestStress() {
 	ctx := context.Background()
-	s.SetupMulberrySuite(ctx, "jackal_evm_log.txt")
+	s.SetupMulberrySuite(ctx, "stress_log.txt")
 	defer logFile.Close()
-
-	// Fund jackal account
 
 	// Connect to Anvil RPC
 	rpcURL := "http://127.0.0.1:8545"
@@ -50,14 +45,9 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	if err != nil {
 		log.Fatalf("Failed to initialize Ethereum object: %v", err)
 	}
-
 	log.Printf("Ethereum object initialized: %+v", ethWrapper)
 
-	// Define accounts and their private keys
 	privateKeyA := "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-	addressB := common.HexToAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
-	fmt.Println(addressB)
-
 	// Convert accountA's private key string to *ecdsa.PrivateKey
 	privKeyA, err := crypto.HexToECDSA(privateKeyA[2:]) // Remove "0x" prefix
 	if err != nil {
@@ -66,7 +56,6 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 
 	// Get the public address of Account A
 	addressA := crypto.PubkeyToAddress(privKeyA.PublicKey)
-	fmt.Println(addressA)
 	addressAString := addressA.String()
 	EvmUserA = addressAString
 	addressAHex := addressA.Hex()
@@ -77,8 +66,6 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	msg := factorytypes.ExecuteMsg{
 		CreateBindings: &factorytypes.ExecuteMsg_CreateBindings{UserEvmAddress: &EvmUserA},
 	}
-	// WARNING: possible that we made a bindings contract for the wrong address. Or the address was empty when we sent the below tx
-	// and it failed silently.
 	res, _ := s.ChainB.ExecuteContract(ctx, s.UserB.KeyName(), factoryAddress, msg.ToString(), "--gas", "500000")
 	// NOTE: cannot parse res because of cosmos-sdk issue noted before, so we will get an error
 	// fortunately, we went into the docker container to confirm that the post key msg does get saved into canine-chain
@@ -96,7 +83,6 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 
 	fundingRes, _ := s.ChainB.ExecuteContract(ctx, s.UserB.KeyName(), factoryAddress, factoryFundingExecuteMsg.ToString(), "--gas", "500000")
 	fmt.Println(fundingRes)
-	time.Sleep(10 * time.Second)
 
 	// Check Account A's nonce
 	nonce, err := client.PendingNonceAt(context.Background(), addressA)
@@ -105,46 +91,12 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	}
 	fmt.Printf("Account A's nonce is %d\n", nonce)
 
-	// Bump the nounce
-	nonce = nonce + 1
-
 	// Get chain ID from the client
 	chainID, err := client.NetworkID(context.Background())
 	fmt.Printf("Chain ID is: %d\n", chainID)
 	if err != nil {
 		log.Fatalf("Failed to get chain ID: %v", err)
 	}
-
-	// Prepare the transaction
-	amount := new(big.Int).Mul(big.NewInt(35), big.NewInt(1e18)) // 35 ETH in wei
-	gasLimit := uint64(21000)
-	gasPrice, err := client.SuggestGasPrice(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to get gas price: %v", err)
-	}
-
-	tx := types.NewTransaction(nonce, addressB, amount, gasLimit, gasPrice, nil)
-
-	// Sign the transaction
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privKeyA)
-	if err != nil {
-		log.Fatalf("Failed to sign transaction: %v", err)
-	}
-
-	// Send the transaction
-	err = client.SendTransaction(context.Background(), signedTx)
-	if err != nil {
-		log.Fatalf("Failed to send transaction: %v", err)
-	}
-	fmt.Printf("Transaction sent: %s\n", signedTx.Hash().Hex())
-
-	// Query Account B's balance to ensure it received the 35 ETH
-	balanceB, err := client.BalanceAt(context.Background(), addressB, nil)
-	if err != nil {
-		log.Fatalf("Failed to query balance for Account B: %v", err)
-	}
-
-	fmt.Printf("Account B balance: %s ETH\n", new(big.Float).Quo(new(big.Float).SetInt(balanceB), big.NewFloat(1e18)).String())
 
 	// pathOfScripts := filepath.Join(dir, "scripts/SimpleStorage.s.sol")
 	dir, _ := os.Getwd() // note: returns the root of this repository: ict-evm/
@@ -189,7 +141,6 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	go eth.ListenToLogs(wsClient, common.HexToAddress(ContractAddress))
 
 	// Define the parameters for the `postFile` function
-
 	merkleBytes := []byte{0x01, 0x02, 0x03, 0x04}
 
 	// Encode to hexadecimal
@@ -202,108 +153,106 @@ func (s *OutpostTestSuite) TestJackalEVMBridge() {
 	// Given value
 	value := big.NewInt(5000000000000)
 	zero := big.NewInt(0)
+	var txHash string
 
 	// the below calls test evm <-> mulberry <-> cosmwasm <-> canine
-
-	txHash, err := ethWrapper.CastSend(ContractAddress, "postFile(string,uint64,string,uint64)", []string{merkleHex, filesize, "", "30"}, rpcURL, privateKeyA, value)
-	if logAndSleep(txHash); err != nil {
-		log.Fatalf("Call `postFile` failed on contract: %v", err)
+	for i := 0; i < 100; i++ {
+		txHash, err = ethWrapper.CastSend(ContractAddress, "postFile(string,uint64,string,uint64)", []string{merkleHex, filesize, "", "30"}, rpcURL, privateKeyA, value)
+		if log.Println(txHash); err != nil {
+			log.Fatalf("Call `postFile` failed on contract: %v", err)
+		}
 	}
+	log.Println("100 `postFile` calls complete")
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "buyStorage(string,uint64,uint64,string)", []string{testJKLAddress, "30", "1073741824", "sample referral"}, rpcURL, privateKeyA, value)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `buyStorage` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "deleteFile(string,uint64)", []string{merkleHex, "1"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `deleteFile` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "requestReportForm(string,string,string,uint64)", []string{"prover", merkleHex, testJKLAddress, "1"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `requestReportForm` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "postKey(string)", []string{"test key"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `postKey` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "provisionFileTree(string,string,string)", []string{"{}", "{}", "tracking123"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `provisionFileTree` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "postFileTree(string,string,string,string,string,string,string)", []string{"account", "parent hash", "child hash", "contents", "{}", "{}", "tracking123"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `postFileTree` failed on contract: %v", err) // fails for parent does not exist
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "deleteFileTree(string,string)", []string{"test/path", "account"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `deleteFileTree` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "addViewers(string,string,string,string)", []string{"viewer id", "viewer key", "for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `addViewers` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "removeViewers(string,string,string)", []string{"viewer id", "for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `removeViewers` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "resetViewers(string,string)", []string{"for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `resetViewers` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "changeOwner(string,string,string)", []string{"for address", "old owner", "new owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `changeOwner` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "addEditors(string,string,string,string)", []string{"editor id", "editor key", "for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `addEditors` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "removeEditors(string,string,string)", []string{"editor id", "for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `removeEditors` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "resetEditors(string,string)", []string{"for address", "file owner"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `resetEditors` failed on contract: %v", err) // fails for file not found
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "createNotification(string,string,string)", []string{testJKLAddress, `{"key": "value"}`, base64.StdEncoding.EncodeToString([]byte("encrypted contents"))}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `createNotification` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "deleteNotification(string,uint64)", []string{testJKLAddress, "60"}, rpcURL, privateKeyA, zero)
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `deleteNotification` failed on contract: %v", err)
 	}
 
 	txHash, err = ethWrapper.CastSend(ContractAddress, "blockSenders(string[])", []string{`["` + testJKLAddress + `"]`}, rpcURL, privateKeyA, zero) // can also block registered .jkl names
-	if logAndSleep(txHash); err != nil {
+	if log.Println(txHash); err != nil {
 		log.Fatalf("Call `blockSenders` failed on contract: %v", err)
 	}
 
+	time.Sleep(5 * time.Second)
 	s.Require().True(s.Run("forge", func() {
 		fmt.Println("made it to the end")
 	}))
 	eth.ExecuteCommand("killall", []string{"anvil"})
 	e2esuite.StopContainerByImage(image)
-}
-
-func logAndSleep(txHash string) error {
-	fmt.Printf("tx hash: %s\n", txHash)
-	time.Sleep(10 * time.Second)
-	return nil
 }

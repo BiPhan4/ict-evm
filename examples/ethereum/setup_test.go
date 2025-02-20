@@ -33,7 +33,7 @@ var (
 	image            string
 )
 
-func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
+func (s *OutpostTestSuite) SetupMulberrySuite(ctx context.Context, logName string) {
 	// Start Anvil node
 	anvilArgs := []string{"--port", "8545", "--block-time", "1", "--host", "0.0.0.0", "-vvvvv"}
 	// easiest way to install anvil is foundryup --install stable
@@ -141,7 +141,7 @@ func (s *OutpostTestSuite) SetupJackalEVMBridgeSuite(ctx context.Context) {
 		log.Fatalf("Error running container: %v", err)
 	}
 
-	logFile, err = os.Create("mulberry_logs.txt")
+	logFile, err = os.Create(logName)
 	if err != nil {
 		log.Fatalf("Failed to create log file: %v", err)
 	}

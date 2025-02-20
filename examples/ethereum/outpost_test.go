@@ -9,22 +9,15 @@ import (
 	"time"
 
 	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/e2esuite"
-	"github.com/strangelove-ventures/interchaintest/v7/examples/ethereum/eth"
 	"github.com/stretchr/testify/suite"
 )
 
 type OutpostTestSuite struct {
 	e2esuite.TestSuite
-
-	// Whether to generate fixtures for the solidity tests
-	generateFixtures bool
-
 	// The private key of a test account
 	key *ecdsa.PrivateKey
 	// The private key of the faucet account of interchaintest
 	deployer *ecdsa.PrivateKey
-
-	contractAddresses eth.DeployedContracts
 }
 
 func (s *OutpostTestSuite) SetupSuite(ctx context.Context) {
