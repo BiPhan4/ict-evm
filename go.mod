@@ -5,7 +5,7 @@ go 1.19
 require (
 	cosmossdk.io/math v1.1.2
 	github.com/99designs/keyring v1.2.2
-	github.com/BurntSushi/toml v1.3.2
+	github.com/BurntSushi/toml v1.5.0
 	github.com/ChainSafe/go-schnorrkel/1 v0.0.0-00010101000000-000000000000
 	github.com/CosmWasm/wasmd v0.41.0
 	github.com/StirlingMarketingGroup/go-namecase v1.0.0
